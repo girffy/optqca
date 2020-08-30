@@ -6,13 +6,11 @@ import scipy
 import scipy.linalg as la
 import scipy.stats
 
-DEBUG = True
-def debug(*argv):
-  if DEBUG:
+DEBUG_LEVEL = 1
+def debug(level, *argv):
+  if level <= DEBUG_LEVEL:
     print(*argv)
 
-
-#from est_grad import *
 
 def out_prod(u,v):
   return np.array(np.matmul(np.matrix(u).T, np.matrix(v).conj()))
@@ -73,16 +71,9 @@ def der_exp(X, M):
   # TODO: can probably roll the constant factors (the -1s and factorial) into
   # this value as well
   adXkeXM = np.matmul(la.expm(XH), M)
-  #debug("Start der logging ------------------")
   for k in range(num_terms):
-    #debug(der)
-    #debug(adXkeXM)
-    #debug("")
     der += (-1)**k * adXkeXM / np.math.factorial(k+1)
     adXkeXM = XH*adXkeXM - adXkeXM*XH
-  #debug(der)
-  #debug(adXkeXM)
-  #debug("End der logging ------------------")
 
   return der
 
@@ -130,7 +121,6 @@ def partial_trace(u, v, n):
   M = np.zeros([2**n, 2**n], dtype=np.complex64)
   for i in range(2**n):
     for j in range(2**n):
-      debug(i*bs , (i+1)*bs)
       x = u[i*bs : (i+1)*bs]
       M[i,j] = in_prod(u[i*bs : (i+1)*bs]  ,  v[j*bs : (j+1)*bs])
 
@@ -138,7 +128,7 @@ def partial_trace(u, v, n):
 
 def meas_prob_grad(state, err_vec):
   #ip2 = 2 * np.multiply(state, np.array(err_vec.T)[0])
-  ip2 = 2 * np.multiply(state, err_vec.T.reshape(state.shape[0], ))
+  ip2 = 2 * np.multiply(state, err_vec.reshape(state.shape[0], ))
   return ip2
 
 def loss_gradient(circuit, initial_state, msmt_qubits, err_vec):
@@ -163,6 +153,7 @@ def loss_gradient(circuit, initial_state, msmt_qubits, err_vec):
     gradients: the loss gradient, as a list of gradients of each operation
     loss: the current loss of the circuit
   """
+  debug(2, "\n\nenter loss gradient")
   nqubits = len(circuit.all_qubits())
   if msmt_qubits != list(range(nqubits))[-len(msmt_qubits):]:
     raise Exception("msmt_qubits currently must be the last qubits")
@@ -172,21 +163,24 @@ def loss_gradient(circuit, initial_state, msmt_qubits, err_vec):
   non_msmt_qubits = [i for i in range(nqubits) if i not in msmt_qubits]
 
   init_reshape = np.array(initial_state).reshape((initial_state.shape[0],))
-  #debug("Running forward pass...")
   fwd = list([initial_state] +
          [step.state_vector() for step in
           simulator.simulate_moment_steps(circuit, initial_state=init_reshape)])
   final_state = fwd[-1]
-  debug("final_state: %s" % final_state)
+  debug(3, "final_state: %s" % final_state)
 
   # TODO: will have to reorder this vector in the future if we allow other
   # msmt_qubits
   ext_err_vec = np.kron(np.ones(2**len(non_msmt_qubits)), err_vec).astype(np.complex64)
+  debug(3, "ext_err_vec: ", ext_err_vec)
+  debug(3, "ext_err_vec shape: ", ext_err_vec.shape)
   ploss = (abs(in_prod(final_state, ext_err_vec)) ** 2).sum()
 
   # time for some weird backprop
-  #debug("Running backward pass...")
+  debug(3, "Running backward pass...")
   err_grad = meas_prob_grad(final_state, ext_err_vec) # dloss/dphi
+  debug(3, "err_grad: ", err_grad)
+  debug(3, "err_grad shape: ", err_grad.shape)
   emp_err_grad = None
   egnorm = np.linalg.norm(err_grad)
   # TODO: what should be my threshold here?
@@ -194,22 +188,16 @@ def loss_gradient(circuit, initial_state, msmt_qubits, err_vec):
     bak = [0*err_grad for i in range(len(list(circuit.all_operations())) + 1)]
   else:
     bak_init = err_grad / egnorm
-    foo = simulator.simulate(rev, initial_state=bak_init.copy())
     bak = list(reversed([bak_init] +
             [step.state_vector() for step in
              simulator.simulate_moment_steps(rev, initial_state=np.array(bak_init).copy())]))
     bak = list(map(lambda x: x*egnorm, bak))
 
-
-  #loss = abs(fwd[-1].dot(err_fcnl))**2
-  #ip = in_prod(fwd[-1], err_fcnl)
-  debug("end (norm %s) is:" % la.norm(fwd[-1]))
-  debug(fwd[-1])
-  debug("err_grad (norm %s) is:" % la.norm(err_grad))
-  debug(err_grad)
-  #debug("err_grad is %s" % err_grad)
-  #debug("emp_err_grad is %s" % emp_err_grad)
-  debug("ploss is %s" % ploss)
+  debug(3, "end (norm %s) is:" % la.norm(fwd[-1]))
+  debug(3, fwd[-1])
+  debug(3, "err_grad (norm %s) is:" % la.norm(err_grad))
+  debug(3, err_grad)
+  debug(3, "ploss is %s" % ploss)
 
   gradients = []
   for i, op in enumerate(circuit.all_operations()):
@@ -219,7 +207,6 @@ def loss_gradient(circuit, initial_state, msmt_qubits, err_vec):
       gradients.append(0*op.gate._unitary_())
       continue
 
-    #debug("working on gate %s" % i)
     # rekron both prev_in and next_err so the relevant qubits are at the front
     init = [q.x for q in op.qubits]
     prev_in = rekron(fwd[i], nqubits, init)
@@ -237,22 +224,6 @@ def loss_gradient(circuit, initial_state, msmt_qubits, err_vec):
     M = partial_trace(next_err, prev_in, len(init)) # dloss/dU
     D = der_exp(X, M) # dloss/dX
     gradient = .5 * (D - D.getH()) # project Dr into u(n)
-
-    if True:
-      #debug("prev_in, next_err:")
-      #debug(prev_in)
-      #debug(next_err)
-      debug("X is:")
-      debug(X)
-      debug("U is:")
-      debug(la.expm(X))
-      debug("M is:")
-      debug(M)
-      debug("D is:")
-      debug(D)
-      debug("gradient is:")
-      debug(gradient)
-      #raise
 
     gradients.append(gradient)
 
@@ -274,26 +245,26 @@ def avg_gradient(circuit, msmt_qubits, training_set):
 
   return scaled_gradients, avg_loss
 
-def step(circuit, gradients, stepsize, aim=None):
+def step(circuit, gradients, step_size, aim=None):
   """Given a circuit and gradients for the gates, apply a step of gradient descent
 
   Steps in the direction of deepest descent, with step size configurable by
-  stepsize and aim.
+  step_size and aim.
 
-  If aim is None, then each step is simply the gradient multiplied by stepsize.
+  If aim is None, then each step is simply the gradient multiplied by step_size.
 
   If aim is 'norm', then the steps are chosen so that the norm of each step is
-  stepsize.
+  step_size.
 
   If aim is 'decrease', then the steps are chosen so that, according to the
   first-order approximation of the loss given by the gradients, the estimated
-  decrease in the loss from this step is stepsize.
+  decrease in the loss from this step is step_size.
 
   Input:
     circuit: the starting circuit from which we are stepping
     gradients: a list of the gradients for each gate in circuit
-    stepsize: a real number configuring the amount to step
-    aim: an optional parameter configuring how stepsize is used
+    step_size: a real number configuring the amount to step
+    aim: an optional parameter configuring how step_size is used
 
   Output:
     new_circuit: a new circuit obtained by stepping
@@ -306,7 +277,7 @@ def step(circuit, gradients, stepsize, aim=None):
     if np.isclose(gnorm, 0):
       step = 0*gradient
     else:
-      step = -stepsize * gradient
+      step = -step_size * gradient
 
     if aim == 'norm':
       step /= gnorm
@@ -314,11 +285,7 @@ def step(circuit, gradients, stepsize, aim=None):
     steps.append(step)
 
   if aim == 'decrease':
-    steps = map(lambda x: x * stepsize/est_increase, steps)
-
-  #debug('steps is:')
-  #debug(steps)
-  #raise
+    steps = map(lambda x: x * step_size/est_increase, steps)
 
   for step, op, gradient in zip(steps, circuit.all_operations(), gradients):
     X, err = la.logm(op.gate._unitary_().astype(np.complex64), False)
@@ -329,7 +296,6 @@ def step(circuit, gradients, stepsize, aim=None):
     U, _ = la.polar(U)
 
     new_circuit.append(op.with_gate(unitary_to_gate(U)))
-  debug('est_increase: %s' % est_increase)
 
   return new_circuit
 
@@ -358,42 +324,69 @@ def emp_dir_exp(X):
 def rotket(theta):
   return np.matrix([[np.cos(theta)], [np.sin(theta)]], dtype = np.complex64)
 
+def optimize_qca (qca, msmt_qubits, training_set, num_iterations = 50, step_aim = None, step_size = 1):
+  """Optimize the given quantum circuit architecture with training data via gradient descent
 
+  This function takes a description of a quantum circuit architecture,
+  constructs a circuit with uniformly random values for each gate, and runs
+  gradient descent using the training set to optimize the values of the
+  unitaries. It produces the final circuit.
 
-if __name__ == '__main__':
-  np.set_printoptions(precision=3, suppress=True)
-  qubits = [cirq.LineQubit(i) for i in range(3)]
-  os2 = 1/np.sqrt(2)
-  ket0 = np.matrix([[1],[0]], dtype = np.complex64)
-  ket1 = np.matrix([[0],[1]], dtype = np.complex64)
-  ketp = os2 * (ket0 + ket1)
-  ketm = os2 * (ket0 - ket1)
+  Input:
+    qca: a quantum circuit architecture, which is a list of lists of qubit
+      indices; each list of quibt indices represents a unitary gate acting on
+      those qubits.
+    msmt_qubits: a list of qubit indices, indicating which qubit(s) are measured at the end.
+    training_set: a list of (init_state, error_vec) pairs, where init_state
+      indicates the input to the circuit, and error_vec is a vector on the space of msmt_qubits
+      (i.e., of size 2**len(msmt_qubits)), indicating the error of a given answer (for instance, by
+      containing a 1 entry for every wrong answer, and a 0 for every correct answer).
+    num_iterations: the number of iterations of gradient descent to run
+    step_aim: the aim argument to step()
+    step_size: the step_size argument to step()
 
-  inp = np.kron(ketp, np.kron(ketp, ketp))
-  msmt_qubits = [2]
-  err_vec = ket0
-
-  U1 = unitary_to_gate(scipy.stats.unitary_group.rvs(4))(*qubits[:2])
-  U2 = unitary_to_gate(scipy.stats.unitary_group.rvs(4))(*qubits[1:])
-  #U1 = unitary_to_gate(np.eye(4))(*qubits[:2])
-  #U2 = unitary_to_gate(np.eye(4))(*qubits[1:])
+  Output:
+    circuit: the final optimized quantum circuit, as a cirq.Circuit
+    loss: the loss of the circuit with respect to the training set
+  """
+  num_qubits = max(max(msmt_qubits), max([max(gate_qubits) for gate_qubits in qca])) + 1
+  qubits = [cirq.LineQubit(i) for i in range(num_qubits)]
   circuit = cirq.Circuit()
-  #circuit.append([U1, U2])
-  circuit.append(U1)
-  circuit.append(U2)
+  for gate_qubits in qca:
+    qubs = [qubits[i] for i in gate_qubits]
+    U = unitary_to_gate(scipy.stats.unitary_group.rvs(2**len(qubs)))(*qubs)
+    circuit.append(U)
 
-  # try to learn to answer with the negation of the first qubit
-  zero_to_one = np.kron(ket0, np.kron(ket0, ket0)),  np.array(ket1.T)
-  one_to_zero = np.kron(ket1, np.kron(ket0, ket0)),  np.array(ket0.T)
-  training_set = [zero_to_one, one_to_zero]
-
-  gss = []
-  losses = []
-  #gradients, loss = loss_gradient(circuit, inp, msmt_qubits, bad_povm)
-  #gradients1, loss1 = loss_gradient(circuit, zero_to_one[0], msmt_qubits, zero_to_one[1])
-  #gradients2, loss2 = loss_gradient(circuit, one_to_zero[0], msmt_qubits, one_to_zero[1])
-  for i in range(50):
+  for i in range(num_iterations):
     gradients, loss = avg_gradient(circuit, msmt_qubits, training_set)
-    gss.append(gradients)
-    losses.append(loss)
-    circuit = step(circuit, gradients, 1)
+    sum_gradient_norm = sum([np.linalg.norm(grad) for grad in gradients])
+    debug(1, "step %d: sum gradient norm=%5f, loss=%5f" % (i, sum_gradient_norm, loss))
+    circuit = step(circuit, gradients, step_size, aim = step_aim)
+  
+  return circuit, loss
+
+def ket (ketstr):
+  """Construct a "ket" state from a string of 0s and 1s
+
+  This will construct a state of len(ketstr) qubits, as a np.array with shape (2**len(ketstr),). For
+  instance, ket('010') will produce the state |010>. This function is mainly intended as a helper
+  function for constructing training sets.
+
+  Inputs:
+    ketstr: A string consisting only of '0' and '1' characters
+
+  Output:
+    state: The corresponding quantum state
+  """
+  ket0 = np.array([1,0], dtype = np.complex64)
+  ket1 = np.array([0,1], dtype = np.complex64)
+  state = np.array([1])
+  for char in ketstr:
+    if char == '0':
+      state = np.kron(state, ket0)
+    elif char == '1':
+      state = np.kron(state, ket1)
+    else:
+      raise Exception("ket(): input '%s' contained char other than 0 or 1" % ketstr)
+
+  return state
