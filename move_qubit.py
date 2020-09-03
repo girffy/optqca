@@ -7,7 +7,7 @@ then we have a circuit that looks like:
           ------------└  ┘--┌  ┐--
           ------------------└  ┘----[output]
 """
-from gradient3 import *
+from optimize_qca import *
 
 NUM_QUBITS = 3
 NEGATE_QUBIT = False

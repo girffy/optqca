@@ -1,3 +1,7 @@
+"""
+Contains code for taking a description of a QCA and a training set, and producing an optimized
+quantum circuit trained on the training set.
+"""
 import cirq
 import qutip
 import itertools

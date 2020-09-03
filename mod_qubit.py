@@ -2,7 +2,7 @@
 Trains a single-qubit quantum circuit to modify a qubit from one value to another.
 """
 
-from gradient3 import *
+from optimize_qca import *
 
 START_VALUE = ket('0')
 END_VALUE = ket('+')
