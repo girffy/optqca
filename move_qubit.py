@@ -27,7 +27,6 @@ if __name__ == '__main__':
 
   circuit, loss = optimize_qca(qca, msmt_qubits, training_set, num_iterations = 100, step_size = 0.4)
   print("Final circuit (loss = %f): " % loss)
-  print("Final circuit:")
   print(circuit)
 
   sim = cirq.Simulator()
