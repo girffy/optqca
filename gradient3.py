@@ -373,19 +373,26 @@ def ket (ketstr):
   function for constructing training sets.
 
   Inputs:
-    ketstr: A string consisting only of '0' and '1' characters
+    ketstr: A string consisting only of the characters '0', '1', '+', and '-'
 
   Output:
     state: The corresponding quantum state
   """
+  os2 = 1/np.sqrt(2)
   ket0 = np.array([1,0], dtype = np.complex64)
   ket1 = np.array([0,1], dtype = np.complex64)
+  ketp = os2 * (ket0 + ket1)
+  ketm = os2 * (ket0 - ket1)
   state = np.array([1])
   for char in ketstr:
     if char == '0':
       state = np.kron(state, ket0)
     elif char == '1':
       state = np.kron(state, ket1)
+    elif char == '+':
+      state = np.kron(state, ketp)
+    elif char == '-':
+      state = np.kron(state, ketm)
     else:
       raise Exception("ket(): input '%s' contained char other than 0 or 1" % ketstr)
 
